@@ -304,6 +304,7 @@ async function getTicketDetails(req, res) {
 
 async function verifyTicket(req, res) {
   try {
+    console.log(code);
     const { code } = req.body;
 
     if (!code) {
@@ -322,6 +323,7 @@ async function verifyTicket(req, res) {
     }).populate('ticket');
 
     if (scanData) {
+      console.log('326');
       return res.status(200).json({
         success: true,
         error: 'Ticket already scanned by the current user',
@@ -347,9 +349,11 @@ async function verifyTicket(req, res) {
       };
       await axios.post(ticket.event.webhookUrl, payload);
     }
+    console.log('352');
     // Return the updated ticket
     res.status(200).json({ success: true, message: 'Ticket successfully scanned', ticket: { ...scanData._doc, ticket: updatedTickets } });
   } catch (err) {
+    console.log('356');
     res.status(200).json({ success: false, error: 'Internal server error' });
   }
 }
