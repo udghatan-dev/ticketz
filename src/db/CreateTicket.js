@@ -12,6 +12,7 @@ const ticketSchema = new mongoose.Schema(
     name: { type: String },
     contactNumber: { type: String },
     qrcode: { type: String },
+    qrimage: { type: String },
     qrCodeContent: { type: String },
     scanned: { type: Boolean, default: false },
     photo: { type: String },

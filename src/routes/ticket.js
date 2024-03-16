@@ -9,6 +9,7 @@ import ScannedModel from '../db/ScanTicket.js';
 import LoginModel from '../db/UserLogin.js';
 import { v4 as uuidv4 } from 'uuid';
 import axios from 'axios';
+import saveMedia from '../helper/s3.js';
 const router = express.Router();
 
 // Middleware to verify JWT token
@@ -28,17 +29,13 @@ async function createEvent(req, res) {
     const { title, webhookUrl } = req.body;
 
     if (!title) {
-      return res
-        .status(400)
-        .json({ error: 'Title is required for creating an event' });
+      return res.status(400).json({ error: 'Title is required for creating an event' });
     }
 
     const event = new EventModel({ title, webhookUrl, user: req.user.userId });
     const result = await event.save();
 
-    res
-      .status(201)
-      .json({ message: 'Event created successfully', event: result });
+    res.status(201).json({ message: 'Event created successfully', event: result });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Internal server error' });
@@ -50,9 +47,7 @@ async function createTicket(req, res) {
     const { eventId, name, contactNumber, ...dynamicFields } = req.body;
 
     if (!eventId) {
-      return res
-        .status(400)
-        .json({ error: 'Event ID is required to create a ticket' });
+      return res.status(400).json({ error: 'Event ID is required to create a ticket' });
     }
 
     const event = await EventModel.findById(eventId);
@@ -62,16 +57,28 @@ async function createTicket(req, res) {
     }
 
     if (event.user.toString() !== req.user.userId) {
-      return res
-        .status(403)
-        .json({ error: 'Unauthorized: You are not the owner of this event' });
+      return res.status(403).json({ error: 'Unauthorized: You are not the owner of this event' });
     }
 
     // Generate a UUID for the ticketuid
     const ticketuid = uuidv4();
 
-    const qrCodeDataURL = await generateQRCodeDataURL(ticketuid);
+    let qrCodeData;
+    try {
+      qrCodeData = await generateQRCodeDataURL(ticketuid);
+    } catch (error) {
+      return res.status(400).json({ error: 'facing some issue in QR Code generation' });
+    }
 
+    let media;
+    try {
+      media = await saveMedia(qrCodeData.buffer);
+    } catch (error) {
+      return res.status(400).json({ error: 'facing some issue in generating s3 image of QR Code' });
+    }
+    if (!media.success) {
+      return res.status(400).json({ error: 'facing some issue in generating s3 image of QR Code' });
+    }
     // Create a new ticket with the generated UUID
     const ticketData = {
       event: eventId,
@@ -80,26 +87,26 @@ async function createTicket(req, res) {
       contactNumber: contactNumber,
       ...dynamicFields,
       ticketuid: ticketuid,
-      qrcode: qrCodeDataURL,
+      qrcode: qrCodeData.base64,
       qrCodeContent: ticketuid,
+      qrimage: media.link,
     };
 
     const ticket = new TicketModel(ticketData);
 
     const ticketDetails = await ticket.save();
 
-    res
-      .status(201)
-      .json({ message: 'Ticket created successfully', ticket: ticketDetails });
+    return res.status(201).json({ message: 'Ticket created successfully', ticket: ticketDetails });
   } catch (error) {
-    res.status(500).json({ error: 'Internal server error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 }
 
 async function generateQRCodeDataURL(qrCodeContent) {
   try {
     const qrCodeDataURL = await qrcode.toDataURL(qrCodeContent);
-    return qrCodeDataURL;
+    const qrCodeDataBuffer = await qrcode.toBuffer(qrCodeContent);
+    return { base64: qrCodeDataURL, buffer: qrCodeDataBuffer };
   } catch (error) {
     throw new Error('Error generating QR code');
   }
@@ -113,9 +120,7 @@ async function scanTicket(req, res) {
       return res.status(400).json({ error: 'QR Code Content is required' });
     }
 
-    const ticket = await TicketModel.findOne({ qrCodeContent }).populate(
-      'event'
-    );
+    const ticket = await TicketModel.findOne({ qrCodeContent }).populate('event');
 
     if (!ticket) {
       return res.status(404).json({ error: 'Ticket not found' });
@@ -133,11 +138,7 @@ async function scanTicket(req, res) {
       });
     }
 
-    const updatedTickets = await TicketModel.findByIdAndUpdate(
-      ticket._id,
-      { scanned: true },
-      { new: true }
-    );
+    const updatedTickets = await TicketModel.findByIdAndUpdate(ticket._id, { scanned: true }, { new: true });
 
     // Create a new entry in the scanned model
     await ScannedModel.create({
@@ -148,10 +149,7 @@ async function scanTicket(req, res) {
     });
 
     if (!ticket.scanned && ticket.event && ticket.event.webhookUrl) {
-      console.log(
-        'Sending scanned details to webhook URL:',
-        ticket.event.webhookUrl
-      );
+      console.log('Sending scanned details to webhook URL:', ticket.event.webhookUrl);
 
       const payload = {
         ticketId: ticket._id,
@@ -164,14 +162,10 @@ async function scanTicket(req, res) {
 
       console.log('Scanned details sent successfully to webhook URL');
     } else {
-      console.log(
-        'Ticket has already been scanned or webhook URL is not provided'
-      );
+      console.log('Ticket has already been scanned or webhook URL is not provided');
     }
     // Return the updated ticket
-    res
-      .status(200)
-      .json({ message: 'Ticket successfully scanned', ticket: updatedTickets });
+    res.status(200).json({ message: 'Ticket successfully scanned', ticket: updatedTickets });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Internal server error' });
@@ -185,18 +179,14 @@ async function createUser(req, res) {
     // Check if the email already exists
     const existingUser = await UserModel.findOne({ email });
     if (existingUser) {
-      return res
-        .status(400)
-        .json({ message: 'Email already exists', userId: existingUser._id });
+      return res.status(400).json({ message: 'Email already exists', userId: existingUser._id });
     }
 
     // Create a new user
     const newUser = new UserModel({ email, username, password });
     await newUser.save();
 
-    res
-      .status(201)
-      .json({ message: 'User created successfully', userId: newUser._id });
+    res.status(201).json({ message: 'User created successfully', userId: newUser._id });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Internal server error' });
@@ -236,9 +226,7 @@ async function login(req, res) {
     }
 
     // Include login details in the response
-    return res
-      .status(200)
-      .json({ message: 'Login successful', loginDetails: loginDetails });
+    return res.status(200).json({ message: 'Login successful', loginDetails: loginDetails });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -271,9 +259,7 @@ async function updateTicket(req, res) {
     const updatedTicket = await ticket.save();
 
     // Return the updated ticket
-    res
-      .status(200)
-      .json({ message: 'Ticket details updated', ticket: updatedTicket });
+    res.status(200).json({ message: 'Ticket details updated', ticket: updatedTicket });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -313,6 +299,61 @@ async function getTicketDetails(req, res) {
     res.status(500).json({ error: 'Internal server error' });
   }
 }
+
+//verify ticket from scanner app
+
+async function verifyTicket(req, res) {
+  try {
+    const { code } = req.body;
+
+    if (!code) {
+      return res.status(200).json({ success: false, error: 'Code is missing' });
+    }
+
+    const ticket = await TicketModel.findOne({ qrCodeContent: code }).populate('event');
+
+    if (!ticket) {
+      return res.status(200).json({ success: false, error: 'Ticket not found' });
+    }
+
+    let scanData = await ScannedModel.findOne({
+      user: ticket.user,
+      ticket: ticket._id,
+    }).populate('ticket');
+
+    if (scanData) {
+      return res.status(200).json({
+        success: true,
+        error: 'Ticket already scanned by the current user',
+        ticket: scanData,
+      });
+    }
+
+    const updatedTickets = await TicketModel.findByIdAndUpdate(ticket._id, { scanned: true }, { new: true });
+
+    // Create a new entry in the scanned model
+    scanData = await ScannedModel.create({
+      user: ticket.user,
+      ticket: ticket._id,
+      scanned: true,
+      checkInTime: new Date(),
+    });
+
+    if (!ticket.scanned && ticket.event && ticket.event.webhookUrl) {
+      const payload = {
+        ticketId: ticket._id,
+        user: ticket.user,
+        ticket: { ...scanData._doc, ticket: updatedTickets },
+      };
+      await axios.post(ticket.event.webhookUrl, payload);
+    }
+    // Return the updated ticket
+    res.status(200).json({ success: true, message: 'Ticket successfully scanned', ticket: { ...scanData._doc, ticket: updatedTickets } });
+  } catch (err) {
+    res.status(200).json({ success: false, error: 'Internal server error' });
+  }
+}
+router.post('/ticket/verify', verifyTicket);
 
 // Routes
 router.post('/event', authenticateToken, createEvent);

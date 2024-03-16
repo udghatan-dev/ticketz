@@ -23,7 +23,7 @@ mongoose
   .catch((err) => console.error('MongoDB connection error:', err));
 
 import router from './routes/ticket.js';
-app.use('/', router);
+app.use('/api', router);
 
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
