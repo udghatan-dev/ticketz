@@ -22,6 +22,10 @@ mongoose
   .then(() => console.log('MongoDB connected'))
   .catch((err) => console.error('MongoDB connection error:', err));
 
+app.get('/', (req, res) => {
+  return res.send('we are listening at ' + port);
+});
+
 import router from './routes/ticket.js';
 app.use('/api', router);
 
