@@ -27,7 +27,14 @@ app.get('/', (req, res) => {
 });
 
 import router from './routes/ticket.js';
-app.use('/api', router);
+app.use(
+  '/api',
+  (req, res, next) => {
+    console.log(req.path);
+    next();
+  },
+  router
+);
 
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);
